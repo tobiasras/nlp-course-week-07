@@ -1,0 +1,54 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: dockerfile
+    container_name: fastapi_app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./data:/data:ro
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  ui:
+    build:
+      context: ./ui
+      dockerfile: dockerfile
+    container_name: text_to_query_ui
+    ports:
+      - "8001:8001"
+    environment:
+      STUDENT_URL: http://backend:8000/v1/query
+    volumes:
+      - ./ui:/app
+    depends_on:
+      - backend
+    command: uvicorn text_to_query_ui:app --host 0.0.0.0 --port 8001 --reload
+
+  qlever:
+    image: docker.io/adfreiburg/qlever:latest
+    container_name: qlever_engine
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /data
+    ports:
+      - "7070:7070"
+    volumes:
+      - ./data:/data
+    environment:
+      HOME: /tmp
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - |
+        set -euo pipefail
+        if [ ! -f /data/keyboards.meta-data.json ]; then
+          echo "Building QLever index from keyboards.nt..."
+          qlever index --system native
+        fi
+        exec qlever-server -i /data/keyboards -p 7070 -m 2G -c 1G -s 30s
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7070/sparql?query=ASK%20%7B%20%3Fs%20%3Fp%20%3Fo%20%7D"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 15s
